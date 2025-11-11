@@ -1,0 +1,812 @@
+{
+  "name": "RANGER AI-22",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {},
+        "options": {}
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "1. Gmail Trigger - Monitor Client Emails",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        -224
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "[REDACTED]",
+          "name": "Google OAuth2 API RangerAI Master"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and separate PDF attachments for individual processing\nconst outputs = [];\nconst emailData = $input.all()[0].json;\n\nconsole.log('Processing email from:', emailData.from);\nconsole.log('Subject:', emailData.subject);\n\n// Check if we have binary data (attachments from Gmail trigger)\nconst binaryData = $input.all()[0].binary;\n\nif (binaryData && Object.keys(binaryData).length > 0) {\n  console.log('Found binary attachments:', Object.keys(binaryData).length);\n  \n  // Process each binary attachment\n  Object.keys(binaryData).forEach((key, index) => {\n    const attachment = binaryData[key];\n    \n    // Check if it's a PDF\n    if (attachment.mimeType && attachment.mimeType.includes('pdf')) {\n      console.log(`Processing PDF: ${attachment.fileName || key}`);\n      \n      // Get the PDF content - it's already in base64 format from Gmail\n      const pdfContent = attachment.data;\n      \n      outputs.push({\n        json: {\n          senderEmail: emailData.from || emailData.From || 'unknown',\n          subject: emailData.subject || emailData.Subject || 'No Subject',\n          messageId: emailData.id || emailData.messageId || 'no-id',\n          pdfIndex: index + 1,\n          totalPdfs: 1, // Will update if counting multiple PDFs\n          pdfFileName: attachment.fileName || `document_${index + 1}.pdf`,\n          pdfContent: pdfContent, // This is base64 encoded PDF content\n          timestamp: new Date().toISOString()\n        },\n        binary: {\n          pdf: attachment\n        }\n      });\n    } else {\n      console.log(`Skipping non-PDF attachment: ${attachment.fileName} (${attachment.mimeType})`);\n    }\n  });\n  \n  // Update total PDF count\n  outputs.forEach(item => {\n    item.json.totalPdfs = outputs.length;\n  });\n  \n} else {\n  console.log('No binary attachments found in email');\n  \n  // Alternative: Check if attachments are in JSON format (older Gmail trigger format)\n  if (emailData.attachments && Array.isArray(emailData.attachments)) {\n    console.log('Found attachments in JSON format:', emailData.attachments.length);\n    \n    const pdfAttachments = emailData.attachments.filter(att => \n      att.mimeType === 'application/pdf' || att.mimeType.includes('pdf')\n    );\n    \n    if (pdfAttachments.length > 0) {\n      pdfAttachments.forEach((pdf, index) => {\n        outputs.push({\n          json: {\n            senderEmail: emailData.from || emailData.From || 'unknown',\n            subject: emailData.subject || emailData.Subject || 'No Subject',\n            messageId: emailData.id || emailData.messageId || 'no-id',\n            pdfIndex: index + 1,\n            totalPdfs: pdfAttachments.length,\n            pdfFileName: pdf.filename || pdf.name || `document_${index + 1}.pdf`,\n            pdfContent: pdf.content || pdf.data,\n            timestamp: new Date().toISOString()\n          }\n        });\n      });\n    }\n  }\n}\n\n// If no PDFs found, return a single item with error info for debugging\nif (outputs.length === 0) {\n  console.log('No PDF attachments found - creating debug output');\n  return [{\n    json: {\n      error: 'No PDF attachments found',\n      senderEmail: emailData.from || emailData.From || 'unknown',\n      subject: emailData.subject || emailData.Subject || 'No Subject',\n      debugInfo: {\n        hasBinary: !!binaryData,\n        binaryKeys: binaryData ? Object.keys(binaryData) : [],\n        hasAttachments: !!emailData.attachments,\n        attachmentCount: emailData.attachments ? emailData.attachments.length : 0\n      }\n    }\n  }];\n}\n\nconsole.log(`Returning ${outputs.length} PDF(s) for processing`);\nreturn outputs;"
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "2. Extract PDF Attachments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        -224
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4-turbo-preview",
+          "mode": "list",
+          "cachedResultName": "GPT-4 Turbo"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a specialized legal document data extraction AI. Extract structured information from oil and gas lease documents with perfect accuracy. Always respond with valid JSON only. Do not include any markdown formatting, code blocks, or explanatory text - just pure JSON.",
+              "role": "system"
+            },
+            {
+              "content": "Extract all relevant lease information from the following PDF content and return ONLY valid JSON.\n\nPDF CONTENT:\n{{ $json.pdfContent }}\n\nRETURN THIS EXACT JSON STRUCTURE WITH EXTRACTED VALUES (use null for missing fields):\n{\n  \"extractedData\": {\n    \"lease\": {\n      \"title\": null,\n      \"fileNumber\": null,\n      \"effectiveDate\": null,\n      \"ourFileReference\": null\n    },\n    \"lessor\": {\n      \"name\": null,\n      \"address\": null,\n      \"postalCode\": null\n    },\n    \"lessee\": {\n      \"name\": null,\n      \"companyName\": null\n    },\n    \"property\": {\n      \"townshipCity\": null,\n      \"province\": null,\n      \"titleNumber\": null,\n      \"legalDescription\": null,\n      \"interestRegisterNumber\": null,\n      \"interestNumber\": null,\n      \"referenceLandDescription\": null\n    },\n    \"consideration\": {\n      \"dollarValueWritten\": null,\n      \"dollarValueNumber\": null,\n      \"timeFrame\": null,\n      \"bonusWritten\": null,\n      \"bonusNumber\": null,\n      \"totalWritten\": null,\n      \"totalNumber\": null\n    },\n    \"primaryTerm\": {\n      \"written\": null,\n      \"number\": null\n    },\n    \"payments\": {\n      \"rentalLumpSumWritten\": null,\n      \"rentalLumpSumNumber\": null,\n      \"suspendedWellPaymentWritten\": null,\n      \"suspendedWellPaymentNumber\": null,\n      \"mannerOfPaymentDirectedTo\": null,\n      \"totalWritten\": null,\n      \"totalNumber\": null,\n      \"chequeNumber\": null,\n      \"dueDate\": null,\n      \"reference\": null\n    },\n    \"extension\": {\n      \"term\": null,\n      \"termWritten\": null,\n      \"termNumber\": null,\n      \"paymentWritten\": null,\n      \"paymentNumber\": null,\n      \"lumpSumRentalWritten\": null,\n      \"lumpSumRentalNumber\": null,\n      \"noticeDate\": null\n    },\n    \"royalties\": {\n      \"conventionalWritten\": null,\n      \"conventionalNumber\": null,\n      \"thermalWritten\": null,\n      \"thermalNumber\": null\n    },\n    \"taxes\": {\n      \"conventionalWritten\": null,\n      \"conventionalNumber\": null,\n      \"thermalWritten\": null,\n      \"thermalNumber\": null\n    },\n    \"notices\": {\n      \"address\": null,\n      \"email\": null,\n      \"phone\": null\n    },\n    \"signatures\": {\n      \"lessorSignature\": null,\n      \"lessorDate\": null,\n      \"lesseeSignature\": null,\n      \"lesseeDate\": null\n    },\n    \"affidavit\": {\n      \"witnessName\": null\n    },\n    \"invoice\": {\n      \"number\": null,\n      \"date\": null,\n      \"dueDate\": null,\n      \"totalAmount\": null,\n      \"status\": null,\n      \"description\": null,\n      \"notes\": null,\n      \"billTo\": {\n        \"name\": null,\n        \"address\": null,\n        \"city\": null,\n        \"province\": null\n      }\n    },\n    \"assignment\": {\n      \"assignorName\": null,\n      \"assigneeName\": null,\n      \"date\": null,\n      \"effectiveDate\": null\n    },\n    \"acquisition\": {\n      \"date\": null,\n      \"lands\": null,\n      \"depository\": null,\n      \"total\": null\n    },\n    \"preparedBy\": {\n      \"name\": null,\n      \"company\": null,\n      \"phone\": null,\n      \"email\": null\n    }\n  }\n}\n\nEXTRACTION RULES:\n1. Preserve exact capitalization and formatting from source\n2. Convert dates to YYYY-MM-DD format\n3. Extract numeric values without currency symbols\n4. For written amounts, preserve full text (e.g., \"Five Thousand Dollars\")\n5. Look for common variations (e.g., \"Lessor\" may appear as \"Landowner\" or \"Grantor\")\n6. File numbers often appear as \"File No:\", \"Reference:\", or \"Matter:\"\n7. Legal descriptions typically start with \"NW\", \"NE\", \"SW\", \"SE\" or \"Lot\"\n8. Return ONLY the JSON object, no other text"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "3. OpenAI GPT-4 - Extract Document Data",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [
+        352,
+        -224
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "[REDACTED]",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI response and prepare data\nconst items = [];\nconst inputData = $input.all()[0];\n\ntry {\n  let extractedResponse;\n  \n  // Handle different response formats from OpenAI\n  if (typeof inputData.json.text === 'string') {\n    extractedResponse = JSON.parse(inputData.json.text);\n  } else if (typeof inputData.json.message === 'object') {\n    extractedResponse = inputData.json.message;\n  } else if (typeof inputData.json.message === 'string') {\n    extractedResponse = JSON.parse(inputData.json.message);\n  } else if (inputData.json.response) {\n    extractedResponse = JSON.parse(inputData.json.response);\n  } else if (inputData.json.extractedData) {\n    extractedResponse = inputData.json;\n  } else {\n    throw new Error('Unable to parse OpenAI response');\n  }\n  \n  const extractedData = extractedResponse.extractedData || extractedResponse;\n  \n  // Preserve all data from previous nodes\n  items.push({\n    json: {\n      senderEmail: inputData.json.senderEmail,\n      subject: inputData.json.subject,\n      messageId: inputData.json.messageId,\n      pdfIndex: inputData.json.pdfIndex,\n      totalPdfs: inputData.json.totalPdfs,\n      pdfFileName: inputData.json.pdfFileName,\n      extractedData: extractedData,\n      timestamp: inputData.json.timestamp,\n      processingStatus: 'extracted'\n    },\n    binary: inputData.binary || {}\n  });\n  \n} catch (error) {\n  console.error('Extraction error:', error);\n  // Continue with empty data rather than failing\n  items.push({\n    json: {\n      ...inputData.json,\n      extractedData: {},\n      error: error.message,\n      processingStatus: 'extraction_failed'\n    },\n    binary: inputData.binary || {}\n  });\n}\n\nreturn items;"
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "4. Parse Extracted Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        -224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split into separate items for each template\nconst templates = [\n  {\n    templateId: '[REDACTED_TEMPLATE_ID]',\n    name: 'ASSIN-PNG_and_SCHA',\n    folder: 'Assignments'\n  },\n  {\n    templateId: '[REDACTED_TEMPLATE_ID]',\n    name: 'LEASE_Thermal',\n    folder: 'Leases'\n  },\n  {\n    templateId: '[REDACTED_TEMPLATE_ID]',\n    name: 'PAYOUT_Letter',\n    folder: 'Payouts'\n  },\n  {\n    templateId: '[REDACTED_TEMPLATE_ID]',\n    name: 'Receipt',\n    folder: 'Receipts'\n  },\n  {\n    templateId: '[REDACTED_TEMPLATE_ID]',\n    name: 'REQFUND_with_Extension',\n    folder: 'Requests'\n  }\n];\n\nconst inputData = $input.all()[0].json;\nconst items = [];\n\n// Create item for each template\ntemplates.forEach((template, index) => {\n  items.push({\n    json: {\n      ...inputData,\n      currentTemplate: template,\n      templateIndex: index + 1,\n      totalTemplates: templates.length\n    },\n    binary: $input.all()[0].binary || {}\n  });\n});\n\nreturn items;"
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "5. Split Into Template Processing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        -224
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.currentTemplate.templateId }}",
+          "mode": "string"
+        },
+        "name": "={{ $json.currentTemplate.name }}_{{ $json.extractedData.lease.fileNumber || 'NOFILE' }}_{{ $now.format('yyyy-MM-dd_HHmmss') }}",
+        "options": {}
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "6. Copy Google Doc Template",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1152,
+        -224
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "[REDACTED]",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for document population\nconst items = [];\nconst inputData = $input.all()[0].json;\n\nitems.push({\n  json: {\n    ...inputData,\n    documentId: inputData.id,\n    documentName: inputData.name,\n    webViewLink: inputData.webViewLink,\n    extractedData: inputData.extractedData || {},\n    currentTemplate: inputData.currentTemplate,\n    processingStep: 'ready_for_population'\n  },\n  binary: $input.all()[0].binary || {}\n});\n\nreturn items;"
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "7. Prepare for Doc Population",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        -224
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentURL": "={{ $json.documentId }}",
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "replaceAll",
+              "text": "{{TITLE}}",
+              "replaceText": "={{ $json.extractedData.lease.title || 'TITLE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{FILE_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.lease.fileNumber || 'FILE NUMBER MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{OUR_FILE_REFERENCE}}",
+              "replaceText": "={{ $json.extractedData.lease.ourFileReference || 'OUR FILE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LESSOR_NAME}}",
+              "replaceText": "={{ $json.extractedData.lessor.name || 'LESSOR NAME MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LESSOR_ADDRESS}}",
+              "replaceText": "={{ $json.extractedData.lessor.address || 'LESSOR ADDRESS MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LESSOR_POSTAL_CODE}}",
+              "replaceText": "={{ $json.extractedData.lessor.postalCode || 'LESSOR POSTAL CODE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{TOWNSHIP_CITY}}",
+              "replaceText": "={{ $json.extractedData.property.townshipCity || 'TOWNSHIP/CITY MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PROVINCE}}",
+              "replaceText": "={{ $json.extractedData.property.province || 'PROVINCE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{TITLE_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.property.titleNumber || 'TITLE NUMBER MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LEGAL_DESCRIPTION}}",
+              "replaceText": "={{ $json.extractedData.property.legalDescription || 'LEGAL DESCRIPTION MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INTEREST_REGISTER_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.property.interestRegisterNumber || 'INTEREST REGISTER NUMBER MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INTEREST_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.property.interestNumber || 'INTEREST NUMBER MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LAND_REFERENCE_DESCRIPTION}}",
+              "replaceText": "={{ $json.extractedData.property.referenceLandDescription || 'LAND REFERENCE DESCRIPTION MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CONSIDERATION_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.consideration.dollarValueWritten || 'CONSIDERATION (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CONSIDERATION_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.consideration.dollarValueNumber || 'CONSIDERATION (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CONSIDERATION_TIMEFRAME}}",
+              "replaceText": "={{ $json.extractedData.consideration.timeFrame || 'TIME FRAME MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{BONUS_CONSIDERATION_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.consideration.bonusWritten || 'BONUS CONSIDERATION (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{BONUS_CONSIDERATION_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.consideration.bonusNumber || 'BONUS CONSIDERATION (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CONSIDERATION_TOTAL_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.consideration.totalWritten || 'TOTAL CONSIDERATION (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CONSIDERATION_TOTAL_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.consideration.totalNumber || 'TOTAL CONSIDERATION (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PRIMARY_TERM_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.primaryTerm.written || 'PRIMARY TERM (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PRIMARY_TERM_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.primaryTerm.number || 'PRIMARY TERM (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{RENTAL_LUMP_SUM_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.payments.rentalLumpSumWritten || 'RENTAL LUMP SUM (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{RENTAL_LUMP_SUM_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.payments.rentalLumpSumNumber || 'RENTAL LUMP SUM (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{SUSPENDED_WELL_PAYMENT_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.payments.suspendedWellPaymentWritten || 'SUSPENDED WELL PAYMENT (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{SUSPENDED_WELL_PAYMENT_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.payments.suspendedWellPaymentNumber || 'SUSPENDED WELL PAYMENT (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PAYMENT_DIRECTED_TO}}",
+              "replaceText": "={{ $json.extractedData.payments.mannerOfPaymentDirectedTo || 'PAYMENT DIRECTION MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PAYMENT_TOTAL_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.payments.totalWritten || 'TOTAL PAYMENT (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PAYMENT_TOTAL_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.payments.totalNumber || 'TOTAL PAYMENT (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CHEQUE_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.payments.chequeNumber || 'CHEQUE NUMBER MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PAYMENT_DUE_DATE}}",
+              "replaceText": "={{ $json.extractedData.payments.dueDate || 'DUE DATE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PAYMENT_REFERENCE}}",
+              "replaceText": "={{ $json.extractedData.payments.reference || 'PAYMENT REFERENCE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{EXTENSION_TERM_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.extension.termWritten || 'EXTENSION TERM (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{EXTENSION_TERM_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.extension.termNumber || 'EXTENSION TERM (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{EXTENSION_PAYMENT_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.extension.paymentWritten || 'EXTENSION PAYMENT (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{EXTENSION_PAYMENT_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.extension.paymentNumber || 'EXTENSION PAYMENT (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{EXTENSION_LUMP_SUM_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.extension.lumpSumRentalWritten || 'EXTENSION LUMP SUM (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{EXTENSION_LUMP_SUM_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.extension.lumpSumRentalNumber || 'EXTENSION LUMP SUM (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{EXTENSION_NOTICE_DATE}}",
+              "replaceText": "={{ $json.extractedData.extension.noticeDate || 'EXTENSION NOTICE DATE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ROYALTY_CONVENTIONAL_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.royalties.conventionalWritten || 'CONVENTIONAL ROYALTY (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ROYALTY_CONVENTIONAL_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.royalties.conventionalNumber || 'CONVENTIONAL ROYALTY (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ROYALTY_THERMAL_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.royalties.thermalWritten || 'THERMAL ROYALTY (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ROYALTY_THERMAL_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.royalties.thermalNumber || 'THERMAL ROYALTY (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{TAX_CONVENTIONAL_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.taxes.conventionalWritten || 'CONVENTIONAL TAX (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{TAX_CONVENTIONAL_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.taxes.conventionalNumber || 'CONVENTIONAL TAX (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{TAX_THERMAL_WRITTEN}}",
+              "replaceText": "={{ $json.extractedData.taxes.thermalWritten || 'THERMAL TAX (WRITTEN) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{TAX_THERMAL_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.taxes.thermalNumber || 'THERMAL TAX (NUMBER) MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{NOTICE_ADDRESS}}",
+              "replaceText": "={{ $json.extractedData.notices.address || 'NOTICE ADDRESS MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{NOTICE_EMAIL}}",
+              "replaceText": "={{ $json.extractedData.notices.email || 'NOTICE EMAIL MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{NOTICE_PHONE}}",
+              "replaceText": "={{ $json.extractedData.notices.phone || 'NOTICE PHONE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LESSOR_SIGNATURE}}",
+              "replaceText": "={{ $json.extractedData.signatures.lessorSignature || 'LESSOR SIGNATURE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LESSOR_DATE}}",
+              "replaceText": "={{ $json.extractedData.signatures.lessorDate || $now.format('yyyy-MM-dd') }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LESSEE_SIGNATURE}}",
+              "replaceText": "={{ $json.extractedData.signatures.lesseeSignature || 'LESSEE SIGNATURE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{LESSEE_DATE}}",
+              "replaceText": "={{ $json.extractedData.signatures.lesseeDate || $now.format('yyyy-MM-dd') }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{WITNESS_NAME}}",
+              "replaceText": "={{ $json.extractedData.affidavit.witnessName || 'WITNESS NAME MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INVOICE_NUMBER}}",
+              "replaceText": "={{ $json.extractedData.invoice.number || 'INVOICE NUMBER MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INVOICE_DATE}}",
+              "replaceText": "={{ $json.extractedData.invoice.date || 'INVOICE DATE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INVOICE_DUE_DATE}}",
+              "replaceText": "={{ $json.extractedData.invoice.dueDate || 'INVOICE DUE DATE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INVOICE_TOTAL}}",
+              "replaceText": "={{ $json.extractedData.invoice.totalAmount || 'INVOICE TOTAL MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INVOICE_STATUS}}",
+              "replaceText": "={{ $json.extractedData.invoice.status || 'INVOICE STATUS MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INVOICE_DESCRIPTION}}",
+              "replaceText": "={{ $json.extractedData.invoice.description || 'INVOICE DESCRIPTION MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{INVOICE_NOTES}}",
+              "replaceText": "={{ $json.extractedData.invoice.notes || 'INVOICE NOTES MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{BILL_TO_NAME}}",
+              "replaceText": "={{ $json.extractedData.invoice.billTo.name || 'BILL TO NAME MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{BILL_TO_ADDRESS}}",
+              "replaceText": "={{ $json.extractedData.invoice.billTo.address || 'BILL TO ADDRESS MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{BILL_TO_CITY}}",
+              "replaceText": "={{ $json.extractedData.invoice.billTo.city || 'BILL TO CITY MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{BILL_TO_PROVINCE}}",
+              "replaceText": "={{ $json.extractedData.invoice.billTo.province || 'BILL TO PROVINCE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ASSIGNOR_NAME}}",
+              "replaceText": "={{ $json.extractedData.assignment.assignorName || 'ASSIGNOR NAME MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ASSIGNEE_NAME}}",
+              "replaceText": "={{ $json.extractedData.assignment.assigneeName || 'ASSIGNEE NAME MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ASSIGNMENT_DATE}}",
+              "replaceText": "={{ $json.extractedData.assignment.date || 'ASSIGNMENT DATE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ASSIGNMENT_EFFECTIVE_DATE}}",
+              "replaceText": "={{ $json.extractedData.assignment.effectiveDate || 'EFFECTIVE DATE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ACQUISITION_DATE}}",
+              "replaceText": "={{ $json.extractedData.acquisition.date || 'ACQUISITION DATE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ACQUISITION_LANDS}}",
+              "replaceText": "={{ $json.extractedData.acquisition.lands || 'ACQUISITION LANDS MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ACQUISITION_DEPOSITORY}}",
+              "replaceText": "={{ $json.extractedData.acquisition.depository || 'DEPOSITORY MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{ACQUISITION_TOTAL}}",
+              "replaceText": "={{ $json.extractedData.acquisition.total || 'ACQUISITION TOTAL MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PREPARED_BY_NAME}}",
+              "replaceText": "={{ $json.extractedData.preparedBy.name || 'PREPARER NAME MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{PREPARED_BY_COMPANY}}",
+              "replaceText": "={{ $json.extractedData.preparedBy.company || 'PREPARER COMPANY MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CONTACT_PHONE}}",
+              "replaceText": "={{ $json.extractedData.preparedBy.phone || 'CONTACT PHONE MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CONTACT_EMAIL}}",
+              "replaceText": "={{ $json.extractedData.preparedBy.email || 'CONTACT EMAIL MISSING' }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{CURRENT_DATE}}",
+              "replaceText": "={{ $now.format('yyyy-MM-dd') }}",
+              "matchCase": true
+            },
+            {
+              "action": "replaceAll",
+              "text": "{{TODAY}}",
+              "replaceText": "={{ $now.format('yyyy-MM-dd') }}",
+              "matchCase": true
+            }
+          ]
+        }
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "8. Populate Document Fields",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        -224
+      ],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "[REDACTED]",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preserve document data for PDF export\nconst items = [];\nconst inputData = $input.all()[0];\nconst previousData = $node['7. Prepare for Doc Population'].json;\n\nitems.push({\n  json: {\n    documentId: previousData.documentId,\n    documentName: previousData.documentName,\n    currentTemplate: previousData.currentTemplate,\n    extractedData: previousData.extractedData,\n    senderEmail: previousData.senderEmail,\n    subject: previousData.subject,\n    pdfIndex: previousData.pdfIndex,\n    totalPdfs: previousData.totalPdfs,\n    templateIndex: previousData.templateIndex,\n    totalTemplates: previousData.totalTemplates,\n    processingStatus: 'populated'\n  },\n  binary: inputData.binary || {}\n});\n\nreturn items;"
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "9. Preserve Document Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        -224
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.documentId }}",
+          "mode": "string"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "application/pdf"
+            }
+          },
+          "fileName": "={{ $json.currentTemplate.name }}_{{ $json.extractedData.lease.fileNumber || 'NOFILE' }}_{{ $now.format('yyyyMMdd') }}.pdf"
+        }
+      },
+      "id": "[REDACTED_NODE_ID]",
+      "name": "10. Export to PDF",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2048,
+        -224
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "[REDACTED]",
+          "name": "Google Drive account"
+        }
+      },
+      "disabled": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "1. Gmail Trigger - Monitor Client Emails": {
+      "main": [
+        [
+          {
+            "node": "2. Extract PDF Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Extract PDF Attachments": {
+      "main": [
+        [
+          {
+            "node": "3. OpenAI GPT-4 - Extract Document Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. OpenAI GPT-4 - Extract Document Data": {
+      "main": [
+        [
+          {
+            "node": "4. Parse Extracted Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Parse Extracted Data": {
+      "main": [
+        [
+          {
+            "node": "5. Split Into Template Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Split Into Template Processing": {
+      "main": [
+        [
+          {
+            "node": "6. Copy Google Doc Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Copy Google Doc Template": {
+      "main": [
+        [
+          {
+            "node": "7. Prepare for Doc Population",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Prepare for Doc Population": {
+      "main": [
+        [
+          {
+            "node": "8. Populate Document Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Populate Document Fields": {
+      "main": [
+        [
+          {
+            "node": "9. Preserve Document Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Preserve Document Data": {
+      "main": [
+        [
+          {
+            "node": "10. Export to PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "[REDACTED]",
+  "meta": {
+    "instanceId": "[REDACTED]"
+  },
+  "id": "[REDACTED]",
+  "tags": []
+}
